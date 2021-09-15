@@ -243,7 +243,7 @@ objects:
       spec:
         initContainers:
         - image: ' '
-          name: web-init
+          name: web-init-db
           command: ["/usr/bin/python3"]
           args: ["manage.py", "migrate", "--noinput"]
           env:
@@ -284,9 +284,58 @@ objects:
           volumeMounts:
           - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
             name: ${NAME}-django-config
+          - mountPath: /srv/fedora-happiness-packets/static
+            name: ${NAME}-static
           - mountPath: /srv/fedora/
             name: ${NAME}-fedora-messaging
- 
+
+        - image: ' '
+          name: web-init-static
+          command: ["/usr/bin/python3"]
+          args: [ "./manage.py", "collectstatic", "--noinput" ]
+          env:
+          - name: DJANGO_SETTINGS_MODULE
+            value: 'happinesspackets.settings.openshift.prod'
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                key: django-secret-key
+                name: ${NAME}
+          - name: DB_NAME
+            value: ${NAME}
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: ${NAME}
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: ${NAME}
+          - name: EMAIL_HOST
+            valueFrom:
+              secretKeyRef:
+                key: email-host
+                name: ${NAME}
+          - name: EMAIL_USER
+            valueFrom:
+              secretKeyRef:
+                key: email-user
+                name: ${NAME}
+          - name: EMAIL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: email-password
+                name: ${NAME}
+          volumeMounts:
+          - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
+            name: ${NAME}-django-config
+          - mountPath: /srv/fedora/
+            name: ${NAME}-fedora-messaging
+          - mountPath: /srv/fedora-happiness-packets/static
+            name: ${NAME}-static
+   
         containers:
         - image: ' '
           name: web
@@ -332,6 +381,8 @@ objects:
             name: ${NAME}-django-config
           - mountPath: /srv/fedora/
             name: ${NAME}-fedora-messaging
+          - mountPath: /srv/fedora-happiness-packets/static
+            name: ${NAME}-static
   
 
         - image: ' '
@@ -385,12 +436,15 @@ objects:
         - name: ${NAME}-fedora-messaging
           configMap:
             name: ${NAME}-fedora-messaging
+        - name: ${NAME}-static
+          emptyDir:
     triggers:
     - imageChangeParams:
         automatic: true
         containerNames:
         - web
-        - web-init
+        - web-init-db
+        - web-init-static
         - celery
         from:
           kind: ImageStreamTag
