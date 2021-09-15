@@ -63,6 +63,27 @@ objects:
   kind: ConfigMap
   metadata:
     annotations:
+      description: Manage uwsgi configuration
+    name: ${NAME}-uwsgi
+  data: 
+    uwsgi.ini: |+
+      [uwsgi]
+      http-socket = :8080
+      module = happinesspackets.wsgi:application
+      chdir = /srv/fedora-happiness-packets/
+      master = True
+      vacuum = True
+      max-requests = 5000
+      processes = 4
+      enable-threads = true
+      static-map = /static=/srv/fedora-happiness-packets/static
+      plugins = python3
+
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
       description: Manage application configuration
     name: ${NAME}-fedora-messaging
   data: 
@@ -383,7 +404,9 @@ objects:
             name: ${NAME}-fedora-messaging
           - mountPath: /srv/fedora-happiness-packets/static
             name: ${NAME}-static
-  
+          - mountPath: /srv/uwsgi/
+            name: ${NAME}-volume-uwsgi
+
 
         - image: ' '
           name: celery
@@ -438,6 +461,11 @@ objects:
             name: ${NAME}-fedora-messaging
         - name: ${NAME}-static
           emptyDir:
+        - name: ${NAME}-volume-uwsgi
+          configMap:
+            name: ${NAME}-uwsgi
+
+
     triggers:
     - imageChangeParams:
         automatic: true
@@ -515,7 +543,7 @@ objects:
 
         # Install required system packages
         RUN dnf install -y python3-pip python3-psycopg2 python3-bleach python3-celery python3-pyyaml python3-unipath python3-factory-boy python3-fedora-messaging python3-django python3-django-haystack python3-django-crispy-forms python3-jsonschema python3-mozilla-django-oidc python3-pytest python3-sphinx_rtd_theme python3-fedora python3-whoosh python3-redis && dnf clean all -y
-
+        RUN dnf install -y uwsgi uwsgi-plugin-python3 && dnf clean all -y
         # Copy project files into container
         COPY . /srv/fedora-happiness-packets
 
@@ -527,8 +555,7 @@ objects:
         # Install required Python packages
         RUN pip3 install -r requirements.txt
 
-        CMD [ "python3", "./manage.py", "runserver", "0.0.0.0:8080" ]
-        # CMD [ "./manage.py", "collectstatic", "--noinput" ]
+        CMD [ "uwsgi", "--ini", "/srv/uwsgi/uwsgi.ini" ]
     strategy:
       type: Docker
   triggers:
