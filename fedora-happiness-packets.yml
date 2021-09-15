@@ -3,7 +3,6 @@ kind: Template
 labels:
   app: fedora-happiness-packets
 message: 'The following software have been deployed on https://${APPLICATION_DOMAIN}.'
-  # TODO FEDORA_MESSAGING_CONF=/app/config.toml
 metadata:
   annotations:
     description: A example deployment of Fedora Happiness Packet
@@ -31,7 +30,8 @@ objects:
     email-user: ${EMAIL_USER}
     email-host: ${EMAIL_HOST}
     email-password: ${EMAIL_PASSWORD}
-
+    oidc-rp-client-id: ${OIDC_CLIENT_ID}
+    oidc-rp-client-secret: ${OIDC_CLIENT_SECRET}
 
 # redis => prendre depuis le template
 - apiVersion: v1
@@ -194,6 +194,10 @@ objects:
       REDIS_PORT = get_env_variable('REDIS_SERVICE_PORT')
       CELERY_BROKER_URL = 'redis://' + REDIS_HOST + ':' + REDIS_PORT + '/0'
       CELERY_RESULT_BACKEND = 'redis://' + REDIS_HOST + ':' + REDIS_PORT + '/0'
+
+      OIDC_OP_AUTHORIZATION_ENDPOINT = "https://id.fedoraproject.org/openidc/Authorization"
+      OIDC_OP_TOKEN_ENDPOINT = "https://id.fedoraproject.org/openidc/Token"
+      OIDC_OP_USER_ENDPOINT = "https://id.fedoraproject.org/openidc/UserInfo"
 
 - apiVersion: v1
   kind: DeploymentConfig
@@ -397,6 +401,17 @@ objects:
               secretKeyRef:
                 key: email-password
                 name: ${NAME}
+          - name: OIDC_RP_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                key: oidc-rp-client-id
+                name: ${NAME}
+          - name: OIDC_RP_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                key: oidc-rp-client-secret
+                name: ${NAME}
+
           volumeMounts:
           - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
             name: ${NAME}-django-config
@@ -743,4 +758,12 @@ parameters:
 
 - displayName: Email host
   name: EMAIL_HOST
+  required: true
+
+- displayName: OIDC client ID
+  name: OIDC_CLIENT_ID
+  required: true
+
+- displayName: OIDC client secret
+  name: OIDC_CLIENT_SECRET
   required: true
