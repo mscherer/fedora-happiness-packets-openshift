@@ -1,0 +1,668 @@
+apiVersion: v1
+kind: Template
+labels:
+  app: fedora-happiness-packets
+message: 'The following software have been deployed on https://${APPLICATION_DOMAIN}.'
+  # TODO FEDORA_MESSAGING_CONF=/app/config.toml
+metadata:
+  annotations:
+    description: A example deployment of Fedora Happiness Packet
+    iconClass: icon-python
+    openshift.io/display-name: Fedora Happiness Packet
+    openshift.io/documentation-url: https://fedora-happiness-packets.readthedocs.io/
+    openshift.io/long-description: This template deploy Fedora Happiness Packets from git
+    openshift.io/provider-display-name: OSPO, Red Hat, Inc.
+    tags: quickstart,python,django
+    template.openshift.io/bindable: 'false'
+  name: fedora-happiness-packets
+objects:
+
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: ${NAME}
+  stringData:
+    rabbitmq-pass: ${RABBITMQ_PASSWORD}
+    rabbitmq-user: ${RABBITMQ_USER}
+    database-password: ${DATABASE_PASSWORD}
+    database-user: ${DATABASE_USER}
+    django-secret-key: ${DJANGO_SECRET_KEY}
+    email-user: ${EMAIL_USER}
+    email-host: ${EMAIL_HOST}
+    email-password: ${EMAIL_PASSWORD}
+
+
+# redis => prendre depuis le template
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${NAME}  
+
+  
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${NAME}-rabbitmq
+  spec:
+    lookupPolicy:
+      local: false
+    tags:
+    - annotations: null
+      from:
+        kind: DockerImage
+        name: docker.io/rabbitmq:alpine
+      generation: 2
+      importPolicy:
+        scheduled: true
+      name: latest
+      referencePolicy:
+        type: Source
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
+      description: Manage application configuration
+    name: ${NAME}-fedora-messaging
+  data: 
+    config.toml: |+
+      # TODO fixme
+      amqp_url = "amqp://user:pass@rabbitMq:5672/vhost"
+
+      publish_exchange = "amq.topic"
+
+      topic_prefix = ""
+
+      [tls]
+      ca_cert = "/etc/pki/tls/certs/ca-bundle.crt"
+      keyfile = "/my/client/key.pem"
+      certfile = "/my/client/cert.pem"
+
+      [client_properties]
+      app = "Fedora Happiness Packets"
+
+      [qos]
+      prefetch_size = 0
+      prefetch_count = 25
+
+      [log_config]
+      version = 1
+      disable_existing_loggers = true
+
+      [log_config.formatters.simple]
+      format = "[%(name)s %(levelname)s] %(message)s"
+
+      [log_config.handlers.console]
+      class = "logging.StreamHandler"
+      formatter = "simple"
+      stream = "ext://sys.stdout"
+
+      [log_config.loggers.fedora_messaging]
+      level = "INFO"
+      propagate = false
+      handlers = ["console"]
+
+      [log_config.root]
+      level = "WARNING"
+      handlers = ["console"]
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
+      description: Manage django application configuration
+    name: ${NAME}-django-config
+  data: 
+    prod.py: |+
+      # noinspection PyUnresolvedReferences
+      from happinesspackets.settings.base import *  # noqa
+      
+      SECRET_KEY = get_env_variable("SECRET_KEY")
+      
+      SESSION_COOKIE_AGE = 3600 * 2
+      
+      ALLOWED_HOSTS = '*' # get_env_variable('DJANGO_ALLOWED_HOSTS').split(',')
+      
+      ADMIN_ENABLED = True
+      
+      DATABASES = {
+          'default': {
+              'ENGINE': 'django.db.backends.postgresql_psycopg2',
+              'NAME': get_env_variable("DB_NAME"),
+              'USER': get_env_variable("DB_USERNAME"),
+              'PASSWORD': get_env_variable("DB_PASSWORD"),
+              'HOST': get_env_variable("POSTGRESQL_SERVICE_HOST"),
+              'ATOMIC_REQUESTS': True,
+              'CONN_MAX_AGE': 300,
+          }
+      }
+    
+      TEMPLATES[0]['OPTIONS']['loaders'] = (
+          ('django.template.loaders.cached.Loader', (
+              'django.template.loaders.filesystem.Loader',
+              'django.template.loaders.app_directories.Loader',
+          )),
+      )
+      
+      SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+      
+      #CACHES = {
+      #    'default': {
+      #        'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
+      #        'LOCATION': '127.0.0.1:11211',
+      #    }
+      #}
+     
+      # TODO needed ?? 
+      #LOGGING['handlers']['file'] = {
+      #    'level': 'INFO',
+      #    'class': 'logging.handlers.WatchedFileHandler',
+      #    'formatter': 'verbose',
+      #    'filename': '/tmp/django.log',
+      #}
+      #DEBUG = True
+      #LOGGING['loggers']['']['handlers'].append('file')
+      
+      EMAIL_HOST = get_env_variable('EMAIL_HOST')
+      EMAIL_HOST_USER = get_env_variable('EMAIL_USER')
+      EMAIL_HOST_PASSWORD = get_env_variable('EMAIL_PASSWORD')
+      EMAIL_USE_TLS = True
+      
+      REDIS_HOST = get_env_variable('REDIS_SERVICE_HOST') 
+      REDIS_PORT = get_env_variable('REDIS_SERVICE_PORT')
+      CELERY_BROKER_URL = 'redis://' + REDIS_HOST + ':' + REDIS_PORT + '/0'
+      CELERY_RESULT_BACKEND = 'redis://' + REDIS_HOST + ':' + REDIS_PORT + '/0'
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy rabbitmq
+      template.alpha.openshift.io/wait-for-ready: 'true'
+    name: rabbitmq
+  spec:
+    replicas: 1
+    selector:
+      name: rabbitmq
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          name: rabbitmq
+        name: rabbitmq
+      spec:
+        containers:
+        - env:
+          - name: RABBITMQ_DEFAULT_PASS
+            valueFrom:
+              secretKeyRef:
+                key: rabbitmq-pass
+                name: ${NAME}
+          - name: RABBITMQ_DEFAULT_USER
+            valueFrom:
+              secretKeyRef:
+                key: rabbitmq-user
+                name: ${NAME}
+          - name: RABBITMQ_DEFAULT_VHOST
+            value: "vhost"
+          image: ' '
+          name: rabbitmq
+          ports:
+          - containerPort: 5672
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - rabbitmq
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}-rabbitmq:latest
+      type: ImageChange
+    - type: ConfigChange
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy happinesspackets
+      template.alpha.openshift.io/wait-for-ready: 'true'
+    name: web
+  spec:
+    replicas: 1
+    selector:
+      name: web
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          name: web
+        name: web
+      spec:
+        initContainers:
+        - image: ' '
+          name: web-init
+          command: ["/usr/bin/python3"]
+          args: ["manage.py", "migrate", "--noinput"]
+          env:
+          - name: DJANGO_SETTINGS_MODULE
+            value: 'happinesspackets.settings.openshift.prod'
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                key: django-secret-key
+                name: ${NAME}
+          - name: DB_NAME
+            value: ${NAME}
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: ${NAME}
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: ${NAME}
+          - name: EMAIL_HOST
+            valueFrom:
+              secretKeyRef:
+                key: email-host
+                name: ${NAME}
+          - name: EMAIL_USER
+            valueFrom:
+              secretKeyRef:
+                key: email-user
+                name: ${NAME}
+          - name: EMAIL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: email-password
+                name: ${NAME}
+          volumeMounts:
+          - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
+            name: ${NAME}-django-config
+          - mountPath: /srv/fedora/
+            name: ${NAME}-fedora-messaging
+ 
+        containers:
+        - image: ' '
+          name: web
+          ports:
+          - containerPort: 8080
+          env:
+          - name: DJANGO_SETTINGS_MODULE
+            value: 'happinesspackets.settings.openshift.prod'
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                key: django-secret-key
+                name: ${NAME}
+          - name: DB_NAME
+            value: ${NAME}
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: ${NAME}
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: ${NAME}
+          - name: EMAIL_HOST
+            valueFrom:
+              secretKeyRef:
+                key: email-host
+                name: ${NAME}
+          - name: EMAIL_USER
+            valueFrom:
+              secretKeyRef:
+                key: email-user
+                name: ${NAME}
+          - name: EMAIL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: email-password
+                name: ${NAME}
+          volumeMounts:
+          - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
+            name: ${NAME}-django-config
+          - mountPath: /srv/fedora/
+            name: ${NAME}-fedora-messaging
+  
+
+        - image: ' '
+          name: celery
+          command: ["bash"]
+          args: ["-c", "celery -A happinesspackets worker -l info"]
+          env:
+          - name: DJANGO_SETTINGS_MODULE
+            value: 'happinesspackets.settings.openshift.prod'
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                key: django-secret-key
+                name: ${NAME}
+          - name: DB_NAME
+            value: ${NAME}
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: ${NAME}
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: ${NAME}
+          - name: EMAIL_HOST
+            valueFrom:
+              secretKeyRef:
+                key: email-host
+                name: ${NAME}
+          - name: EMAIL_USER
+            valueFrom:
+              secretKeyRef:
+                key: email-user
+                name: ${NAME}
+          - name: EMAIL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: email-password
+                name: ${NAME}
+          volumeMounts:
+          - mountPath: /srv/fedora-happiness-packets/happinesspackets/settings/openshift
+            name: ${NAME}-django-config
+          - mountPath: /srv/fedora/
+            name: ${NAME}-fedora-messaging
+        volumes:
+        - name: ${NAME}-django-config
+          configMap:
+            name: ${NAME}-django-config
+        - name: ${NAME}-fedora-messaging
+          configMap:
+            name: ${NAME}-fedora-messaging
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - web
+        - web-init
+        - celery
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}:latest
+      type: ImageChange
+    - type: ConfigChange
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy redis
+      template.alpha.openshift.io/wait-for-ready: 'true'
+    name: redis
+  spec:
+    replicas: 1
+    selector:
+      name: redis
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          name: redis
+        name: redis
+      spec:
+        containers:
+        - image: ' '
+          name: redis
+          ports:
+          - containerPort: 6379
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - redis
+        from:
+          kind: ImageStreamTag
+          name: redis:latest
+          namespace: openshift
+      type: ImageChange
+    - type: ConfigChange
+
+# TODO postgresql
+
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      description: Defines how to build the application
+      template.alpha.openshift.io/wait-for-ready: 'true'
+    name: ${NAME}
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${NAME}:latest
+    source:
+      git:
+        ref: openshift_misc
+        uri: https://pagure.io/forks/misc/fedora-commops/fedora-happiness-packets.git
+      type: Git
+      dockerfile: |-
+        FROM registry.fedoraproject.org/fedora:34
+
+        ENV FEDORA_MESSAGING_CONF=/srv/fedora/config.toml
+
+        # Set current working directory
+        WORKDIR /srv/fedora-happiness-packets
+
+        # Install required system packages
+        RUN dnf install -y python3-pip python3-psycopg2 python3-bleach python3-celery python3-pyyaml python3-unipath python3-factory-boy python3-fedora-messaging python3-django python3-django-haystack python3-django-crispy-forms python3-jsonschema python3-mozilla-django-oidc python3-pytest python3-sphinx_rtd_theme python3-fedora python3-whoosh python3-redis procps-ng lsof iproute && dnf clean all -y
+
+        # Copy project files into container
+        COPY . /srv/fedora-happiness-packets
+
+        # Check if client_secrets.json is present, and generate if not
+        #RUN ./generate_client_secrets.sh
+
+        # needed to mount the configmap for config.toml later
+        RUN mkdir -p /srv/fedora/
+        # Install required Python packages
+        RUN pip3 install -r requirements.txt
+
+        CMD [ "python3", "./manage.py", "runserver", "0.0.0.0:8080" ]
+        # CMD [ "./manage.py", "collectstatic", "--noinput" ]
+    strategy:
+      type: Docker
+  triggers:
+  - type: ImageChange
+  - type: ConfigChange
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: web
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: web
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: redis
+    labels:
+      app: redis
+  spec:
+    type: ClusterIP
+    ports:
+    - port: 6379
+      targetPort: 6379
+    selector:
+      name: redis
+
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: postgresql
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${POSTGRESQL_VOLUME_CAPACITY}
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: Exposes the database server
+    name: postgresql
+  spec:
+    ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+    selector:
+      name: postgresql
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy the database
+      template.alpha.openshift.io/wait-for-ready: 'true'
+    name: postgresql
+  spec:
+    replicas: 1
+    selector:
+      name: postgresql
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          name: postgresql
+        name: postgresql
+      spec:
+        containers:
+        - env:
+          - name: POSTGRESQL_USER
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: ${NAME}
+          - name: POSTGRESQL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: ${NAME}
+          - name: POSTGRESQL_DATABASE
+            value: ${NAME}
+          image: ' '
+          livenessProbe:
+            exec:
+              command:
+              - /usr/libexec/check-container
+              - --live
+            initialDelaySeconds: 120
+            timeoutSeconds: 10
+          name: postgresql
+          ports:
+          - containerPort: 5432
+          readinessProbe:
+            exec:
+              command:
+              - /usr/libexec/check-container
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+          resources:
+            limits:
+              memory: ${MEMORY_POSTGRESQL_LIMIT}
+          volumeMounts:
+          - mountPath: /var/lib/pgsql/data
+            name: postgresql-data
+        volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: postgresql
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - postgresql
+        from:
+          kind: ImageStreamTag
+          name: postgresql:12
+          namespace: openshift
+      type: ImageChange
+    - type: ConfigChange
+
+
+
+parameters:
+- description: The name assigned to all of the frontend objects defined in this template.
+  displayName: Name
+  name: NAME
+  required: true
+  value: fedora-happiness-packets
+
+- description: Maximum amount of memory the PostgreSQL container can use.
+  displayName: Memory Limit (PostgreSQL)
+  name: MEMORY_POSTGRESQL_LIMIT
+  required: true
+  value: 512Mi
+
+- description: Volume space available for data, e.g. 512Mi, 2Gi
+  displayName: Volume Capacity
+  name: POSTGRESQL_VOLUME_CAPACITY
+  required: true
+  value: 1Gi
+
+- displayName: Database username
+  name: DATABASE_USER
+  required: true
+  value: fedora
+
+- displayName: Database user password
+  from: '[a-zA-Z0-9]{16}'
+  generate: expression
+  name: DATABASE_PASSWORD
+
+- description: Set this to a long random string.
+  displayName: Django secret key
+  from: '[\w]{50}'
+  generate: expression
+  name: DJANGO_SECRET_KEY
+
+
+- displayName: Rabbitmq username
+  name: RABBITMQ_USER
+  required: true
+  value: fedorabbitmq
+
+- displayName: Rabbitmq password
+  from: '[a-zA-Z0-9]{16}'
+  generate: expression
+  name: RABBITMQ_PASSWORD
+
+- displayName: Email user
+  name: EMAIL_USER
+  required: true
+
+- displayName: Email password
+  name: EMAIL_PASSWORD
+  required: true
+
+- displayName: Email host
+  name: EMAIL_HOST
+  required: true
