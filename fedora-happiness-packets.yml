@@ -434,9 +434,6 @@ objects:
       type: ImageChange
     - type: ConfigChange
 
-# TODO postgresql
-
-
 - apiVersion: v1
   kind: BuildConfig
   metadata:
@@ -463,7 +460,7 @@ objects:
         WORKDIR /srv/fedora-happiness-packets
 
         # Install required system packages
-        RUN dnf install -y python3-pip python3-psycopg2 python3-bleach python3-celery python3-pyyaml python3-unipath python3-factory-boy python3-fedora-messaging python3-django python3-django-haystack python3-django-crispy-forms python3-jsonschema python3-mozilla-django-oidc python3-pytest python3-sphinx_rtd_theme python3-fedora python3-whoosh python3-redis procps-ng lsof iproute && dnf clean all -y
+        RUN dnf install -y python3-pip python3-psycopg2 python3-bleach python3-celery python3-pyyaml python3-unipath python3-factory-boy python3-fedora-messaging python3-django python3-django-haystack python3-django-crispy-forms python3-jsonschema python3-mozilla-django-oidc python3-pytest python3-sphinx_rtd_theme python3-fedora python3-whoosh python3-redis && dnf clean all -y
 
         # Copy project files into container
         COPY . /srv/fedora-happiness-packets
